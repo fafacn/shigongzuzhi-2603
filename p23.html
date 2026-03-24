@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全线土方调配图</title>
+    <style>
+        /* --- 设计系统 --- */
+        :root {
+            --crcc-blue: #003366;
+            --crcc-red: #E60012;
+            --bg-grad: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
+            --cut-color: #38B2AC; /* 挖余 (青色) */
+            --fill-color: #F56565; /* 借方/填方 (红色) */
+            
+            --t1-bg: rgba(47, 133, 90, 0.05); --t1-border: #2F855A;
+            --t2-bg: rgba(197, 48, 48, 0.05); --t2-border: #C53030;
+            --t3-bg: rgba(107, 70, 193, 0.05); --t3-border: #6B46C1;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Microsoft YaHei", sans-serif; }
+
+        body {
+            background: var(--bg-grad);
+            color: #2D3748;
+            min-height: 100vh;
+            height: auto;
+            display: flex; flex-direction: column;
+            padding: 15px;
+            /* 去除垂直限制，允许页面整体自然滚动展现 */
+            overflow-y: visible; 
+            overflow-x: hidden;
+        }
+
+        /* --- 顶部看板 --- */
+        .header {
+            background: white; border-radius: 12px; padding: 15px 25px; margin-bottom: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            display: flex; justify-content: space-between; align-items: center;
+            flex-shrink: 0;
+            border-left: 6px solid var(--crcc-blue);
+        }
+        .header h1 { font-size: 1.4rem; color: var(--crcc-blue); margin-bottom: 5px; }
+        .header p { font-size: 0.9rem; color: #718096; }
+        .global-stats { display: flex; gap: 20px; }
+        .stat-box { background: #F7FAFC; padding: 10px 15px; border-radius: 8px; border: 1px solid #E2E8F0; text-align: center; }
+        .stat-val { font-size: 1.2rem; font-weight: bold; color: var(--crcc-red); }
+
+        /* --- 居中图例 --- */
+        .legend { 
+            margin: 0 auto 15px auto; /* 水平居中并保持底部间距 */
+            display: flex; gap: 20px; background: rgba(255,255,255,0.95); 
+            padding: 10px 25px; border-radius: 25px; border: 1px solid #E2E8F0; 
+            z-index: 100; font-size: 0.9rem; font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            width: fit-content;
+        }
+        .legend-item { display: flex; align-items: center; gap: 8px; }
+        .box { width: 14px; height: 14px; border-radius: 3px; }
+        .b-cut { background: var(--cut-color); }
+        .b-fill { background: var(--fill-color); }
+        .b-flow { width: 24px; height: 3px; border-bottom: 2px dashed #D69E2E; }
+
+        /* --- 核心横向滚动地图 --- */
+        .map-viewport {
+            height: 520px; /* 固定高度，不再自适应挤压 */
+            background: white; border-radius: 12px; overflow-x: auto; overflow-y: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid #E2E8F0;
+            position: relative;
+            margin-bottom: 15px;
+        }
+        
+        /* 自定义横向滚动条 */
+        .map-viewport::-webkit-scrollbar { height: 12px; }
+        .map-viewport::-webkit-scrollbar-track { background: #EDF2F7; border-radius: 6px; }
+        .map-viewport::-webkit-scrollbar-thumb { background: #A0AEC0; border-radius: 6px; }
+        .map-viewport::-webkit-scrollbar-thumb:hover { background: #718096; }
+
+        .map-canvas {
+            width: 3500px; /* 拉宽以适应长轴及起终点 */
+            height: 100%; 
+            position: relative;
+            display: flex; flex-direction: column; justify-content: center;
+        }
+
+        /* 背景工班区域划分 */
+        .zone-bg { position: absolute; top: 0; bottom: 0; border-right: 2px dashed #CBD5E0; z-index: 0; }
+        .zone-t1 { left: 150px; width: 660px; background: var(--t1-bg); border-top: 4px solid var(--t1-border); }
+        .zone-t2 { left: 810px; width: 1800px; background: var(--t2-bg); border-top: 4px solid var(--t2-border); }
+        .zone-t3 { left: 2610px; width: 495px; background: var(--t3-bg); border-top: 4px solid var(--t3-border); border-right: none;}
+
+        .zone-label {
+            position: absolute; top: 15px; left: 20px; font-weight: bold; font-size: 1.1rem;
+            padding: 4px 12px; border-radius: 20px; color: white;
+        }
+
+        /* 中心道路轴线 */
+        .axis-line {
+            position: absolute; top: 50%; left: 0; width: 100%; height: 6px;
+            background: #4A5568; transform: translateY(-50%); z-index: 10;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        /* 柱状图容器 */
+        .chart-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; z-index: 20; padding-left: 20px;
+        }
+
+        /* 单个区段块 */
+        .segment {
+            position: relative; height: 320px; display: flex; flex-direction: column; justify-content: center;
+            border-left: 1px dotted #E2E8F0;
+        }
+        
+        .seg-label {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: white; border: 1px solid #4A5568; padding: 2px 6px; border-radius: 4px;
+            font-size: 0.75rem; font-weight: bold; z-index: 30; white-space: nowrap;
+        }
+
+        /* 挖/填柱子 */
+        .bar { width: 40px; margin: 0 auto; position: absolute; left: 50%; transform: translateX(-50%); border-radius: 4px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); cursor: pointer; transition: 0.2s; }
+        .bar:hover { filter: brightness(1.1); transform: translateX(-50%) scaleX(1.2); }
+        
+        .bar-cut { bottom: 50%; background: var(--cut-color); transform-origin: bottom; }
+        .bar-fill { top: 50%; background: var(--fill-color); transform-origin: top; }
+
+        .val-label {
+            position: absolute; left: 50%; transform: translateX(-50%);
+            font-size: 0.75rem; font-weight: bold; white-space: nowrap;
+        }
+        .bar-cut .val-label { top: -20px; color: var(--cut-color); }
+        .bar-fill .val-label { bottom: -20px; color: var(--fill-color); }
+
+        /* 起终点样式 */
+        .endpoint-box {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            background: #2D3748; color: white; border-radius: 6px;
+            padding: 8px 12px; font-size: 0.9rem; font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2); z-index: 40; text-align: center;
+            line-height: 1.4; white-space: nowrap; left: 50%; margin-left: -40px;
+        }
+
+        /* 动态关键节点动画 (POI) */
+        .poi-circle {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; flex-direction: column; align-items: center; z-index: 50;
+        }
+        .poi-circle .circle {
+            width: 20px; height: 20px; border-radius: 50%; background: var(--crcc-red);
+            animation: pulse-circle 1.5s infinite;
+        }
+        .poi-circle .poi-text {
+            background: rgba(255,255,255,0.95); border: 1px solid var(--crcc-red);
+            color: var(--crcc-red); padding: 2px 8px; border-radius: 4px;
+            font-size: 0.75rem; font-weight: bold; margin-top: 6px; white-space: nowrap;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .poi-bar {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            display: flex; flex-direction: column; align-items: center; z-index: 50;
+        }
+        .poi-bar .bar-shape {
+            width: 100px; height: 16px; background: #3182CE; border-radius: 4px;
+            animation: pulse-bar 1.5s infinite; border: 2px solid white; box-shadow: 0 0 8px rgba(49,130,206,0.6);
+        }
+        .poi-bar .poi-text {
+            background: rgba(255,255,255,0.95); border: 1px solid #3182CE;
+            color: #3182CE; padding: 2px 8px; border-radius: 4px;
+            font-size: 0.75rem; font-weight: bold; margin-top: 6px; white-space: nowrap;
+        }
+
+        @keyframes pulse-circle {
+            0% { box-shadow: 0 0 0 0 rgba(230,0,18,0.7); transform: scale(0.95); }
+            70% { box-shadow: 0 0 0 12px rgba(230,0,18,0); transform: scale(1.1); }
+            100% { box-shadow: 0 0 0 0 rgba(230,0,18,0); transform: scale(0.95); }
+        }
+        @keyframes pulse-bar {
+            0% { opacity: 1; transform: scaleX(0.95); }
+            50% { opacity: 0.6; transform: scaleX(1.05); }
+            100% { opacity: 1; transform: scaleX(0.95); }
+        }
+
+        /* 调配流向 SVG 层 */
+        .flow-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 25; pointer-events: none; }
+        .flow-path { fill: none; stroke: #D69E2E; stroke-width: 3; stroke-dasharray: 6,4; animation: dash 20s linear infinite; }
+        .flow-arrow { fill: #D69E2E; }
+        @keyframes dash { to { stroke-dashoffset: -1000; } }
+
+        /* --- 底部详细说明卡片 --- */
+        .details-panel {
+            height: auto; /* 自动撑开 */
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;
+        }
+        .team-card {
+            background: white; border-radius: 12px; padding: 15px; border: 1px solid #E2E8F0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+        }
+        .team-card h3 { font-size: 1rem; border-bottom: 2px solid #EDF2F7; padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between;}
+        .team-card ul { list-style: none; font-size: 0.85rem; color: #4A5568; line-height: 1.6; }
+        .team-card li { margin-bottom: 6px; position: relative; padding-left: 12px; }
+        .team-card li::before { content: '•'; position: absolute; left: 0; color: #A0AEC0; }
+        .hl { font-weight: bold; color: var(--crcc-red); }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <h1>全线土方调配图</h1>
+            <p>基于最新调配口径：全线本质为“净借方”工程，高度依赖边界接力与外部借土。</p>
+        </div>
+        <div class="global-stats">
+            <div class="stat-box">主线挖方<br><span class="stat-val" style="color:var(--cut-color);">224.9万m³</span></div>
+            <div class="stat-box">换算后总填方<br><span class="stat-val">329.1万m³</span></div>
+            <div class="stat-box" style="background:#FFF5F5; border-color:#FEB2B2;">全线净借方缺口<br><span class="stat-val">约 102.67万m³</span></div>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="box b-cut"></div> 挖余 (万方)</div>
+        <div class="legend-item"><div class="box b-fill"></div> 借方/需填 (万方)</div>
+        <div class="legend-item"><div class="b-flow"></div> 调配方向</div>
+    </div>
+
+    <div class="map-viewport">
+        <div class="map-canvas">
+            
+            <div class="zone-bg zone-t1"><div class="zone-label" style="background:var(--t1-border);">路基一工班 (高填借方主控段)</div></div>
+            <div class="zone-bg zone-t2"><div class="zone-label" style="background:var(--t2-border);">路基二工班 (挖填交错中枢段)</div></div>
+            <div class="zone-bg zone-t3"><div class="zone-label" style="background:var(--t3-border);">路基三工班 (尾段弱平衡借方段)</div></div>
+            
+            <div class="axis-line"></div>
+
+            <div class="chart-layer">
+                <div class="segment" style="width: 150px; border-left:none;">
+                    <div class="endpoint-box" style="margin-left:-20px;">📍 起点</div>
+                </div>
+
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-cut" style="height: 12px;"><div class="val-label">2.43</div></div>
+                    <div class="seg-label">K15-K16</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 55px;"><div class="val-label">11.11</div></div>
+                    <div class="seg-label">K16-17</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 99px;"><div class="val-label">19.81</div></div>
+                    <div class="seg-label">K17-18</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 106px;"><div class="val-label">21.25</div></div>
+                    <div class="seg-label">K18-19</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 92px;"><div class="val-label">18.34</div></div>
+                    <div class="seg-label">K19-20</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-cut" style="height: 77px;"><div class="val-label">15.40</div></div>
+                    <div class="seg-label">K20-21</div>
+                </div>
+
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 24px;"><div class="val-label">4.81</div></div>
+                    <div class="seg-label">K21-22</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 60px;"><div class="val-label">11.98</div></div>
+                    <div class="seg-label">K22-23</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 28px;"><div class="val-label">5.56</div></div>
+                    <div class="seg-label">K23-24</div>
+                </div>
+                <div class="segment" style="width: 165px;">
+                    <div class="bar bar-fill" style="height: 150px; width: 60px;"><div class="val-label">34.80</div></div>
+                    <div class="seg-label">K24-25.5</div>
+                </div>
+                <div class="segment" style="width: 120px; border-left:none; position:relative;">
+                    <div class="poi-bar">
+                        <div class="bar-shape"></div>
+                        <div class="poi-text">含山北互通特大桥</div>
+                    </div>
+                </div>
+                <div class="segment" style="width: 45px;">
+                    <div class="bar bar-fill" style="height: 111px;"><div class="val-label">22.22</div></div>
+                    <div class="seg-label">K26.6-27</div>
+                </div>
+                <div class="segment" style="width: 175px;">
+                    <div class="poi-circle" style="left: 19%;">
+                        <div class="circle"></div>
+                        <div class="poi-text">预制梁场</div>
+                    </div>
+                    <div class="bar bar-cut" style="height: 35px;"><div class="val-label">6.93</div></div>
+                    <div class="seg-label">K27-28.6</div>
+                </div>
+                <div class="segment" style="width: 155px;">
+                    <div class="poi-circle">
+                        <div class="circle"></div>
+                        <div class="poi-text">褒禅山服务区</div>
+                    </div>
+                    <div class="bar bar-cut" style="height: 150px; width: 80px;"><div class="val-label">32.66</div></div>
+                    <div class="seg-label">K28.6-30</div>
+                </div>
+                
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 5px;"><div class="val-label">0.54</div></div>
+                    <div class="seg-label">K30-31</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-cut" style="height: 38px;"><div class="val-label">7.56</div></div>
+                    <div class="seg-label">K31-32</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-cut" style="height: 5px;"><div class="val-label">0.87</div></div>
+                    <div class="seg-label">K32-33</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 45px;"><div class="val-label">8.94</div></div>
+                    <div class="seg-label">K33-34</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-cut" style="height: 9px;"><div class="val-label">1.73</div></div>
+                    <div class="seg-label">K34-35</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-cut" style="height: 34px;"><div class="val-label">6.87</div></div>
+                    <div class="seg-label">K35-36</div>
+                </div>
+
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 5px;"><div class="val-label">0.63</div></div>
+                    <div class="seg-label">K36-37</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 72px;"><div class="val-label">14.46</div></div>
+                    <div class="seg-label">K37-38</div>
+                </div>
+                <div class="segment" style="width: 110px;">
+                    <div class="bar bar-fill" style="height: 21px;"><div class="val-label">4.28</div></div>
+                    <div class="seg-label">K38-39</div>
+                </div>
+                <div class="segment" style="width: 165px;">
+                    <div class="bar bar-cut" style="height: 8px;"><div class="val-label">1.60</div></div>
+                    <div class="seg-label">K39-40.5</div>
+                </div>
+
+                <div class="segment" style="width: 250px; border-left:none;">
+                    <div class="endpoint-box" style="margin-left: 20px;">
+                        🚇 长山隧道进口<br>
+                        <span style="color:#F6AD55; font-size:0.8rem;">出喳量约17万m³</span>
+                    </div>
+                </div>
+            </div>
+
+            <svg class="flow-layer" preserveAspectRatio="none">
+                <path class="flow-path" d="M 750,120 Q 550,30 400,150" />
+                <polygon class="flow-arrow" points="400,150 410,140 415,155" />
+
+                <path class="flow-path" d="M 750,120 Q 800,50 860,180" />
+                <polygon class="flow-arrow" points="860,180 855,165 845,175" />
+
+                <path class="flow-path" d="M 1750,80 Q 1450,-50 1150,150" />
+                <polygon class="flow-arrow" points="1150,150 1165,145 1160,135" />
+
+                <path class="flow-path" d="M 2050,150 Q 2150,100 2280,180" />
+                <polygon class="flow-arrow" points="2280,180 2270,165 2260,175" />
+
+                <path class="flow-path" d="M 2550,150 Q 2610,80 2670,200" />
+                <polygon class="flow-arrow" points="2670,200 2665,185 2655,195" />
+
+                <path class="flow-path" d="M 3000,200 Q 2900,130 2800,220" />
+                <polygon class="flow-arrow" points="2800,220 2815,215 2810,205" />
+            </svg>
+
+        </div>
+    </div>
+
+    <div class="details-panel">
+        <div class="team-card" style="border-top: 4px solid var(--t1-border);">
+            <h3>路基一工班 (K15+236~K21+000) <span style="color:var(--t1-border);">净借方 52.68万</span></h3>
+            <ul>
+                <li><strong>调配特征：</strong>典型连续高填带，K16-K20连续受土，班内主供点极少。全线净借方最大工班。</li>
+                <li><strong>主供土核：</strong><span class="hl">K20-K21 (挖余15.4万)</span>，也是班内唯一核心装车区。</li>
+                <li><strong>组织方案：</strong>不可依赖区段内自平衡(自平衡率仅25%)。必须作为"高填主控工班"管理，尽早打通K20向后方(K17-K20)倒运便道。</li>
+            </ul>
+        </div>
+        
+        <div class="team-card" style="border-top: 4px solid var(--t2-border);">
+            <h3>路基二工班 (K21+000~K36+000) <span style="color:var(--t2-border);">净借方 32.23万</span></h3>
+            <ul>
+                <li><strong>调配特征：</strong>挖填交错，<span class="hl">内部调配能力最强</span>的枢纽段(自平衡率64%)，但仍是净借方。</li>
+                <li><strong>核心枢纽：</strong>中段 <strong>K27-K30 (挖余约39.6万)</strong> 是全线最强主供土核心。</li>
+                <li><strong>组织方案：</strong>以K27-K30为中心联动开挖，主要向西填筑K24-K27大填方带(缺口近57万)。同时打通东西两侧边界接力。</li>
+            </ul>
+        </div>
+
+        <div class="team-card" style="border-top: 4px solid var(--t3-border);">
+            <h3>路基三工班 (K36+000~K40+520) <span style="color:var(--t3-border);">净借方 17.76万</span></h3>
+            <ul>
+                <li><strong>调配特征：</strong>尾段小供土，前段大填方。班内自平衡能力极弱(仅约8%)。</li>
+                <li><strong>调配痛点：</strong>仅K39-K40+520有少量挖余(1.6万)，远不够回填K37-K39(缺口约18.7万)。</li>
+                <li><strong>组织方案：</strong>核心依赖二、三工班边界接力（引入K35-K36挖余）与外借土场同步介入。</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // 自动将滚动条移动到最左侧以确保浏览顺畅
+        window.onload = function() {
+            document.querySelector('.map-viewport').scrollLeft = 0;
+        }
+    </script>
+</body>
+</html>
